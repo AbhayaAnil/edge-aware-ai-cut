@@ -1,10 +1,48 @@
-import { useState } from "react";
+import { useState, useRef } from "react";
 import { Button } from "@/components/ui/button";
-import { Upload, Zap, CheckCircle } from "lucide-react";
+import { Upload, Zap, CheckCircle, Loader2, Download } from "lucide-react";
+import { RemoveBgService } from "@/services/removeBgService";
+import { toast } from "sonner";
 import heroImage from "@/assets/hero-bg-removal.jpg";
 
 const Hero = () => {
   const [dragActive, setDragActive] = useState(false);
+  const [isProcessing, setIsProcessing] = useState(false);
+  const [originalImage, setOriginalImage] = useState<string | null>(null);
+  const [processedImage, setProcessedImage] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const handleFileSelect = async (file: File) => {
+    if (!file.type.startsWith('image/')) {
+      toast.error('Please select a valid image file');
+      return;
+    }
+
+    if (file.size > 50 * 1024 * 1024) {
+      toast.error('Image size must be less than 50MB');
+      return;
+    }
+
+    const originalUrl = URL.createObjectURL(file);
+    setOriginalImage(originalUrl);
+    setProcessedImage(null);
+    setIsProcessing(true);
+
+    try {
+      const result = await RemoveBgService.removeBackground(file);
+      
+      if (result.success && result.imageUrl) {
+        setProcessedImage(result.imageUrl);
+        toast.success('Background removed successfully!');
+      } else {
+        toast.error(result.error || 'Failed to remove background');
+      }
+    } catch (error) {
+      toast.error('An error occurred while processing the image');
+    } finally {
+      setIsProcessing(false);
+    }
+  };
 
   const handleDrag = (e: React.DragEvent) => {
     e.preventDefault();
@@ -20,7 +58,26 @@ const Hero = () => {
     e.preventDefault();
     e.stopPropagation();
     setDragActive(false);
-    // Handle file upload logic here
+    const files = Array.from(e.dataTransfer.files);
+    if (files.length > 0) {
+      handleFileSelect(files[0]);
+    }
+  };
+
+  const handleFileInput = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (files && files.length > 0) {
+      handleFileSelect(files[0]);
+    }
+  };
+
+  const handleDownload = () => {
+    if (processedImage) {
+      const link = document.createElement('a');
+      link.href = processedImage;
+      link.download = 'background-removed.png';
+      link.click();
+    }
   };
 
   return (
@@ -73,9 +130,24 @@ const Hero = () => {
 
             {/* CTA Buttons */}
             <div className="flex flex-col sm:flex-row gap-4 pt-4">
-              <Button variant="hero" size="xl" className="group">
-                <Upload className="w-5 h-5 group-hover:scale-110 transition-transform" />
-                Try It Free Now
+              <Button 
+                variant="hero" 
+                size="xl" 
+                className="group"
+                onClick={() => fileInputRef.current?.click()}
+                disabled={isProcessing}
+              >
+                {isProcessing ? (
+                  <>
+                    <Loader2 className="w-5 h-5 animate-spin" />
+                    Processing...
+                  </>
+                ) : (
+                  <>
+                    <Upload className="w-5 h-5 group-hover:scale-110 transition-transform" />
+                    Try It Free Now
+                  </>
+                )}
               </Button>
               <Button variant="ghost" size="xl">
                 Watch Demo
@@ -101,10 +173,18 @@ const Hero = () => {
 
           {/* Right Column - Upload Area */}
           <div className="relative">
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="image/*"
+              onChange={handleFileInput}
+              className="hidden"
+            />
+            
             <div className="relative bg-card/50 backdrop-blur-sm border border-border/50 rounded-3xl p-8 shadow-glow-soft">
               {/* Upload Zone */}
               <div
-                className={`border-2 border-dashed rounded-2xl p-12 text-center transition-all duration-300 ${
+                className={`border-2 border-dashed rounded-2xl p-12 text-center transition-all duration-300 cursor-pointer ${
                   dragActive
                     ? "border-primary bg-primary/5 scale-105"
                     : "border-border hover:border-primary/50 hover:bg-primary/5"
@@ -113,16 +193,23 @@ const Hero = () => {
                 onDragLeave={handleDrag}
                 onDragOver={handleDrag}
                 onDrop={handleDrop}
+                onClick={() => fileInputRef.current?.click()}
               >
                 <div className="space-y-6">
                   <div className="mx-auto w-16 h-16 bg-gradient-primary rounded-full flex items-center justify-center">
-                    <Upload className="w-8 h-8 text-primary-foreground" />
+                    {isProcessing ? (
+                      <Loader2 className="w-8 h-8 text-primary-foreground animate-spin" />
+                    ) : (
+                      <Upload className="w-8 h-8 text-primary-foreground" />
+                    )}
                   </div>
                   
                   <div className="space-y-2">
-                    <h3 className="text-xl font-semibold">Drop your image here</h3>
+                    <h3 className="text-xl font-semibold">
+                      {isProcessing ? 'Processing your image...' : 'Drop your image here'}
+                    </h3>
                     <p className="text-muted-foreground">
-                      or <span className="text-primary font-medium">browse files</span>
+                      or <span className="text-primary font-medium cursor-pointer">browse files</span>
                     </p>
                   </div>
 
@@ -133,19 +220,68 @@ const Hero = () => {
                 </div>
               </div>
 
-              {/* Live Preview Mockup */}
-              <div className="mt-8 relative">
-                <img 
-                  src={heroImage} 
-                  alt="AI Background Removal Demo"
-                  className="w-full rounded-xl shadow-lg"
-                />
-                <div className="absolute inset-0 bg-gradient-to-t from-card/80 via-transparent to-transparent rounded-xl" />
-                <div className="absolute bottom-4 left-4 bg-card/90 backdrop-blur-sm border border-border/50 rounded-lg p-3">
-                  <div className="text-sm font-medium text-foreground">Background removed in 2.3s</div>
-                  <div className="text-xs text-muted-foreground">99.8% edge accuracy</div>
+              {/* Results Display */}
+              {(originalImage || processedImage) && (
+                <div className="mt-8 space-y-6">
+                  <h4 className="text-lg font-semibold text-center">Results</h4>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    {/* Original Image */}
+                    {originalImage && (
+                      <div className="space-y-3">
+                        <h5 className="text-sm font-medium text-center text-muted-foreground">Original</h5>
+                        <div className="bg-muted/30 rounded-xl p-4">
+                          <img 
+                            src={originalImage} 
+                            alt="Original" 
+                            className="w-full h-48 object-contain rounded-lg"
+                          />
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Processed Image */}
+                    {processedImage && (
+                      <div className="space-y-3">
+                        <h5 className="text-sm font-medium text-center text-muted-foreground">Background Removed</h5>
+                        <div className="bg-checkered rounded-xl p-4">
+                          <img 
+                            src={processedImage} 
+                            alt="Background removed" 
+                            className="w-full h-48 object-contain rounded-lg"
+                          />
+                        </div>
+                        <div className="text-center">
+                          <Button 
+                            variant="outline" 
+                            size="sm"
+                            onClick={handleDownload}
+                            className="w-full"
+                          >
+                            <Download className="w-4 h-4" />
+                            Download PNG
+                          </Button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
                 </div>
-              </div>
+              )}
+
+              {/* Live Preview Mockup - only show when no results */}
+              {!originalImage && !processedImage && (
+                <div className="mt-8 relative">
+                  <img 
+                    src={heroImage} 
+                    alt="AI Background Removal Demo"
+                    className="w-full rounded-xl shadow-lg"
+                  />
+                  <div className="absolute inset-0 bg-gradient-to-t from-card/80 via-transparent to-transparent rounded-xl" />
+                  <div className="absolute bottom-4 left-4 bg-card/90 backdrop-blur-sm border border-border/50 rounded-lg p-3">
+                    <div className="text-sm font-medium text-foreground">Background removed in 2.3s</div>
+                    <div className="text-xs text-muted-foreground">99.8% edge accuracy</div>
+                  </div>
+                </div>
+              )}
             </div>
           </div>
         </div>
